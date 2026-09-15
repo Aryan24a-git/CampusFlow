@@ -1,4 +1,4 @@
-# Excluded project documentation files (do not push to GitHub)
+# ─── Project documentation (do not push to GitHub) ───────────────────────────
 Walkthrough.md
 architecture.md
 brain.md
@@ -9,3 +9,30 @@ memory.md
 prd.md
 security.md
 tech_stack.md
+
+# ─── Secrets — NEVER push .env files ─────────────────────────────────────────
+.env
+.env.local
+.env.production
+.env*.local
+backend/.env
+
+# ─── Dependencies ─────────────────────────────────────────────────────────────
+node_modules/
+**/node_modules/
+
+# ─── Build outputs ────────────────────────────────────────────────────────────
+.next/
+dist/
+build/
+out/
+
+# ─── OS / Editor ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/settings.json
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
