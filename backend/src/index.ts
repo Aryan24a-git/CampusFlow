@@ -28,11 +28,13 @@ import issuesRoutes from './modules/issues/issues.routes';
 import departmentsRoutes from './modules/departments/departments.routes';
 import locationsRoutes from './modules/locations/locations.routes';
 import chatRoutes from './modules/chat/chat.routes';
+import lostFoundRoutes from './modules/lost-found/lost-found.routes';
 
 app.use('/api/issues', issuesRoutes);
 app.use('/api/departments', departmentsRoutes);
 app.use('/api/locations', locationsRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/lost-found', lostFoundRoutes);
 
 // ─── 404 Handler ──────────────────────────────────────────────────────────────
 app.use((_req, res) => {
