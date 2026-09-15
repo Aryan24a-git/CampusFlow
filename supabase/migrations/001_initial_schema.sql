@@ -2,7 +2,7 @@
 -- CampusFlow — Migration 001: Initial Schema
 -- Run this in Supabase SQL Editor (Dashboard > SQL Editor)
 -- ============================================================
-
+ 
 -- Enable pgvector extension (required for AI features)
 CREATE EXTENSION IF NOT EXISTS vector;
 
