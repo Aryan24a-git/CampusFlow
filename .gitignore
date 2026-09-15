@@ -1,0 +1,11 @@
+# Excluded project documentation files (do not push to GitHub)
+Walkthrough.md
+architecture.md
+brain.md
+code_structure.md
+fallback.md
+initial_prompt.md
+memory.md
+prd.md
+security.md
+tech_stack.md
