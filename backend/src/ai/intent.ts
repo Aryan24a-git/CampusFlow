@@ -1,6 +1,6 @@
 import { chatCompletion, sanitizeInput } from './provider';
 import { logger } from '../utils/logger';
-import type { IntentType } from '../../../packages/types/src/index';
+import type { IntentType } from '../types';
 
 // ─── Intent Classification System Prompt ──────────────────────────────────────
 const INTENT_SYSTEM_PROMPT = `You are a campus service assistant intent classifier for CampusFlow.

@@ -23,11 +23,16 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ─── API Routes (to be added per level) ───────────────────────────────────────
-// Level 1: app.use('/api/auth', authRoutes);
-// Level 3: app.use('/api/issues', issuesRoutes);
-// Level 4: app.use('/api/chat', chatRoutes);
-// etc.
+// ─── API Routes ─────────────────────────────────────────────────────────────
+import issuesRoutes from './modules/issues/issues.routes';
+import departmentsRoutes from './modules/departments/departments.routes';
+import locationsRoutes from './modules/locations/locations.routes';
+import chatRoutes from './modules/chat/chat.routes';
+
+app.use('/api/issues', issuesRoutes);
+app.use('/api/departments', departmentsRoutes);
+app.use('/api/locations', locationsRoutes);
+app.use('/api/chat', chatRoutes);
 
 // ─── 404 Handler ──────────────────────────────────────────────────────────────
 app.use((_req, res) => {

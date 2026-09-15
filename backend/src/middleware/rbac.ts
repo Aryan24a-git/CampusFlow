@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import type { UserRole } from '../../../packages/types/src/index';
+import type { UserRole } from '../types';
 
 // ─── RBAC Guard Factory ────────────────────────────────────────────────────────
 export const rbac = (allowedRoles: UserRole[]) => {

@@ -1,6 +1,6 @@
 import { chatCompletion, sanitizeInput } from './provider';
 import { logger } from '../utils/logger';
-import type { ExtractedIssue, Priority } from '../../../packages/types/src/index';
+import type { ExtractedIssue, Priority } from '../types';
 
 // ─── Extraction System Prompt ──────────────────────────────────────────────────
 const EXTRACT_SYSTEM_PROMPT = `You are a campus issue data extractor for CampusFlow.

@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { AppError } from '../utils/errors';
-import type { UserRole } from '../../../packages/types/src/index';
+import type { UserRole } from '../types';
 
 // Extend Express Request type
 declare global {
