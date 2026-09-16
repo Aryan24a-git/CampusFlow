@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
@@ -8,6 +8,7 @@ interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  imageUrls?: string[];
   actionCard?: {
     type: 'issue_confirmation' | 'duplicate_found' | 'issue_status' | 'lost_found_match';
     data: any;
@@ -30,13 +31,19 @@ export default function ChatPage() {
     {
       id: 'welcome',
       role: 'assistant',
-      content: 'Hello! I am CampusFlow AI 👋\nHow can I help you today? You can report any campus facility issue, track existing complaints, or ask about campus procedures.',
+      content: 'Hello! I am CampusFlow AI 👋\nHow can I help you today? You can report any campus facility issue, track existing complaints, or ask about campus procedures.\n\n📸 Tip: You can attach a photo before sending to help document the issue!',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [submittingCard, setSubmittingCard] = useState<string | null>(null);
+
+  // Image upload state
+  const [pendingImages, setPendingImages] = useState<File[]>([]);
+  const [pendingPreviews, setPendingPreviews] = useState<string[]>([]);
+  const [uploadingImages, setUploadingImages] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -47,19 +54,78 @@ export default function ChatPage() {
     scrollToBottom();
   }, [messages, loading]);
 
+  // Handle image file selection
+  const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    const newFiles = files.slice(0, 3 - pendingImages.length); // max 3 total
+    setPendingImages(prev => [...prev, ...newFiles]);
+    newFiles.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = ev => {
+        setPendingPreviews(prev => [...prev, ev.target?.result as string]);
+      };
+      reader.readAsDataURL(file);
+    });
+    // Reset input so same file can be re-selected
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }, [pendingImages.length]);
+
+  const removePendingImage = (idx: number) => {
+    setPendingImages(prev => prev.filter((_, i) => i !== idx));
+    setPendingPreviews(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  // Upload images to Supabase Storage and return public URLs
+  async function uploadImagesToStorage(files: File[]): Promise<string[]> {
+    if (files.length === 0) return [];
+    setUploadingImages(true);
+    const urls: string[] = [];
+    try {
+      for (const file of files) {
+        const ext = file.name.split('.').pop() ?? 'jpg';
+        const path = `chat-attachments/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+        const { error } = await supabase.storage.from('attachments').upload(path, file, {
+          cacheControl: '3600',
+          upsert: false,
+        });
+        if (!error) {
+          const { data: urlData } = supabase.storage.from('attachments').getPublicUrl(path);
+          urls.push(urlData.publicUrl);
+        }
+      }
+    } finally {
+      setUploadingImages(false);
+    }
+    return urls;
+  }
+
   async function handleSend(textToSend?: string) {
     const text = (textToSend ?? input).trim();
-    if (!text || loading) return;
+    const hasText = Boolean(text);
+    const hasImages = pendingImages.length > 0;
+    if ((!hasText && !hasImages) || loading) return;
+
+    const messageText = hasText ? text : 'I am reporting this issue with the attached photo(s).';
+
+    // Upload any pending images first
+    let imageUrls: string[] = [];
+    if (pendingImages.length > 0) {
+      imageUrls = await uploadImagesToStorage(pendingImages);
+    }
 
     const userMsg: Message = {
       id: Math.random().toString(),
       role: 'user',
-      content: text,
+      content: messageText,
+      imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
     setMessages(prev => [...prev, userMsg]);
     if (!textToSend) setInput('');
+    setPendingImages([]);
+    setPendingPreviews([]);
     setLoading(true);
 
     try {
@@ -73,16 +139,30 @@ export default function ChatPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: messageText, imageUrls }),
       });
 
       const resJson = await res.json();
       if (resJson.success) {
+        // Ensure images are securely attached to actionCard data
+        const backendImages = resJson.data.actionCard?.data?.image_urls ?? [];
+        const combinedImages = Array.from(new Set([...backendImages, ...imageUrls]));
+
+        const actionCard = resJson.data.actionCard
+          ? {
+              ...resJson.data.actionCard,
+              data: {
+                ...resJson.data.actionCard.data,
+                image_urls: combinedImages,
+              },
+            }
+          : undefined;
+
         const assistantMsg: Message = {
           id: Math.random().toString(),
           role: 'assistant',
           content: resJson.data.reply,
-          actionCard: resJson.data.actionCard,
+          actionCard,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         };
         setMessages(prev => [...prev, assistantMsg]);
@@ -124,6 +204,7 @@ export default function ChatPage() {
           subcategory: extracted.subcategory,
           location_label: extracted.location_label,
           severity: extracted.severity,
+          image_urls: extracted.image_urls ?? [],
         }),
       });
 
@@ -135,7 +216,7 @@ export default function ChatPage() {
           {
             id: Math.random().toString(),
             role: 'assistant',
-            content: `✅ Ticket #${issueId.slice(0, 8)} created successfully! It has been dispatched to the ${extracted.category || 'Maintenance'} department.`,
+            content: `✅ Ticket #${issueId.slice(0, 8)} created successfully! It has been dispatched to the ${extracted.category || 'Maintenance'} department.\n${extracted.image_urls?.length > 0 ? `📎 ${extracted.image_urls.length} photo(s) attached to the ticket.` : ''}`,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           },
         ]);
@@ -166,6 +247,9 @@ export default function ChatPage() {
             <p className="text-xs text-slate-400">Natural language ticket resolution & campus AI</p>
           </div>
         </div>
+        <div className="flex items-center gap-2 text-xs text-slate-500">
+          <span>📎</span> <span>Photo uploads supported</span>
+        </div>
       </div>
 
       {/* Messages area */}
@@ -189,6 +273,20 @@ export default function ChatPage() {
                 }`}
               >
                 <p className="whitespace-pre-wrap">{msg.content}</p>
+                {/* Show attached images */}
+                {msg.imageUrls && msg.imageUrls.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {msg.imageUrls.map((url, i) => (
+                      <a key={i} href={url} target="_blank" rel="noreferrer">
+                        <img
+                          src={url}
+                          alt={`Attachment ${i + 1}`}
+                          className="w-20 h-20 object-cover rounded-lg border border-white/20 hover:scale-105 transition-transform"
+                        />
+                      </a>
+                    ))}
+                  </div>
+                )}
                 <div
                   className={`text-[10px] mt-1 text-right ${
                     msg.role === 'user' ? 'text-blue-200' : 'text-slate-400'
@@ -228,6 +326,69 @@ export default function ChatPage() {
                         <span className="bg-white/10 px-2 py-1 rounded-md text-[11px]">
                           📍 {msg.actionCard.data.location_label}
                         </span>
+                      </div>
+
+                      {/* Attached Photo Thumbnails */}
+                      {msg.actionCard.data.image_urls && msg.actionCard.data.image_urls.length > 0 && (
+                        <div className="pt-2 border-t border-white/5">
+                          <div className="text-[11px] font-semibold text-slate-300 mb-1.5 flex items-center gap-1">
+                            <span>📷</span> Attached Photos ({msg.actionCard.data.image_urls.length}):
+                          </div>
+                          <div className="flex gap-2 flex-wrap">
+                            {msg.actionCard.data.image_urls.map((url: string, i: number) => (
+                              <a key={i} href={url} target="_blank" rel="noreferrer" title="Click to view full photo">
+                                <img
+                                  src={url}
+                                  alt={`Evidence ${i + 1}`}
+                                  className="w-16 h-16 object-cover rounded-xl border border-white/20 hover:scale-105 transition-transform"
+                                />
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Direct card photo upload button */}
+                      <div className="pt-1">
+                        <input
+                          type="file"
+                          id={`card-upload-${msg.id}`}
+                          accept="image/*"
+                          multiple
+                          className="hidden"
+                          onChange={async (e) => {
+                            const files = Array.from(e.target.files ?? []);
+                            if (files.length === 0) return;
+                            const uploaded = await uploadImagesToStorage(files);
+                            if (uploaded.length > 0) {
+                              setMessages(prev => prev.map(m => {
+                                if (m.id === msg.id && m.actionCard) {
+                                  const existing = m.actionCard.data.image_urls ?? [];
+                                  return {
+                                    ...m,
+                                    actionCard: {
+                                      ...m.actionCard,
+                                      data: {
+                                        ...m.actionCard.data,
+                                        image_urls: Array.from(new Set([...existing, ...uploaded])),
+                                      },
+                                    },
+                                  };
+                                }
+                                return m;
+                              }));
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => document.getElementById(`card-upload-${msg.id}`)?.click()}
+                          disabled={uploadingImages}
+                          className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-blue-500/30 text-slate-300 hover:text-blue-300 rounded-lg text-xs flex items-center gap-1.5 transition-all"
+                        >
+                          <span>📎</span>
+                          <span>{uploadingImages ? 'Uploading...' : 'Attach / Add Photo to Ticket'}</span>
+                        </button>
                       </div>
                     </div>
 
@@ -313,7 +474,7 @@ export default function ChatPage() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Suggested prompts (if message history is short) */}
+      {/* Suggested prompts */}
       {messages.length <= 2 && (
         <div className="py-2 overflow-x-auto flex gap-2 no-scrollbar">
           {SAMPLE_PROMPTS.map((prompt) => (
@@ -328,6 +489,30 @@ export default function ChatPage() {
         </div>
       )}
 
+      {/* Pending image previews */}
+      {pendingPreviews.length > 0 && (
+        <div className="flex gap-2 py-2 flex-wrap">
+          {pendingPreviews.map((src, i) => (
+            <div key={i} className="relative group">
+              <img
+                src={src}
+                alt={`Preview ${i + 1}`}
+                className="w-16 h-16 object-cover rounded-xl border border-white/20"
+              />
+              <button
+                onClick={() => removePendingImage(i)}
+                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-600 text-white rounded-full text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <div className="text-xs text-slate-500 self-end pb-1">
+            {pendingPreviews.length}/3 photo{pendingPreviews.length > 1 ? 's' : ''} ready
+          </div>
+        </div>
+      )}
+
       {/* Input bar */}
       <form
         onSubmit={(e) => {
@@ -336,6 +521,33 @@ export default function ChatPage() {
         }}
         className="pt-3 border-t border-white/10 flex gap-2"
       >
+        {/* Image attach button */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={handleImageSelect}
+          className="hidden"
+          disabled={pendingImages.length >= 3}
+        />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={pendingImages.length >= 3 || uploadingImages}
+          title="Attach photo evidence"
+          className={`px-3 py-3 rounded-xl text-sm border transition-all shrink-0 ${
+            pendingImages.length > 0
+              ? 'bg-blue-600/20 border-blue-500/40 text-blue-300'
+              : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-white'
+          } disabled:opacity-40 disabled:cursor-not-allowed`}
+        >
+          {uploadingImages ? '⏳' : '📎'}
+          {pendingImages.length > 0 && (
+            <span className="ml-1 text-xs">{pendingImages.length}</span>
+          )}
+        </button>
+
         <input
           type="text"
           value={input}
@@ -345,7 +557,7 @@ export default function ChatPage() {
         />
         <button
           type="submit"
-          disabled={loading || !input.trim()}
+          disabled={loading || (!input.trim() && pendingImages.length === 0)}
           className="px-5 py-3 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-xl text-sm transition-all shadow-lg shadow-blue-500/20 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
         >
           Send

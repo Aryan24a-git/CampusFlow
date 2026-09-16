@@ -18,19 +18,22 @@ export default async function StudentLayout({
     .eq('id', user.id)
     .single();
 
-  if (!profile) redirect('/login');
+  // Fallback to JWT metadata if the DB query returns null (RLS timing issue)
+  const name = profile?.name ?? (user.user_metadata?.name as string) ?? 'User';
+  const email = profile?.email ?? user.email ?? '';
+  const role = profile?.role ?? (user.user_metadata?.role as string) ?? 'student';
 
   // Staff/admin shouldn't be in student routes
-  if (['staff', 'admin', 'grievance_authority'].includes(profile.role)) {
-    redirect(profile.role === 'staff' ? '/queue' : '/admin/dashboard');
+  if (['staff', 'admin', 'grievance_authority'].includes(role)) {
+    redirect(role === 'staff' ? '/queue' : '/admin/dashboard');
   }
 
   return (
     <div className="min-h-screen bg-slate-950">
       <Navbar
-        userName={profile.name}
-        userEmail={profile.email}
-        userRole={profile.role}
+        userName={name}
+        userEmail={email}
+        userRole={role}
       />
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
         {children}

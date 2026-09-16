@@ -7,9 +7,9 @@ import { createClient } from '@/lib/supabase/client';
 const DEMO_ACCOUNTS = [
   { role: 'Student', email: 'student@campus.demo', icon: '🎓' },
   { role: 'Faculty', email: 'faculty@campus.demo', icon: '👨‍🏫' },
-  { role: 'Staff', email: 'staff@campus.demo', icon: '🔧' },
+  { role: 'Maintenance Staff', email: 'staff@campus.demo', icon: '🔧' },
   { role: 'Admin', email: 'admin@campus.demo', icon: '⚙️' },
-  { role: 'Dept Head', email: 'depthead@campus.demo', icon: '🏛️' },
+  { role: 'Head of Dept', email: 'depthead@campus.demo', icon: '🏛️' },
 ];
 
 const ROLE_ROUTES: Record<string, string> = {
@@ -59,7 +59,9 @@ export default function LoginPage() {
       .eq('id', user.id)
       .single();
 
-    const dest = ROLE_ROUTES[profile?.role ?? 'student'] ?? '/dashboard';
+    // Fallback to JWT metadata if DB query returns null (RLS or timing)
+    const role = profile?.role ?? (user.user_metadata?.role as string) ?? 'student';
+    const dest = ROLE_ROUTES[role] ?? '/dashboard';
     router.push(dest);
     router.refresh();
   }

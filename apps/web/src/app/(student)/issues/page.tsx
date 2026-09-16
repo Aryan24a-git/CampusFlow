@@ -13,8 +13,11 @@ interface IssueItem {
   priority: string;
   status: string;
   created_at: string;
+  created_by: string;
+  image_urls?: string[];
   departments?: { name: string };
   locations?: { label: string };
+  creator?: { name: string; email: string };
 }
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
@@ -39,26 +42,49 @@ export default function MyIssuesPage() {
   const [issues, setIssues] = useState<IssueItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'all' | 'active' | 'resolved'>('all');
+  const [scope, setScope] = useState<'all' | 'mine'>('all');
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  async function loadIssues() {
+    setLoading(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) setCurrentUserId(user.id);
+
+    let query = supabase
+      .from('issues')
+      .select('id, title, category, location_label, severity, priority, status, created_at, created_by, image_urls, departments(name), locations(label), creator:users!created_by(name, email)')
+      .order('created_at', { ascending: false });
+
+    if (scope === 'mine' && user) {
+      query = query.eq('created_by', user.id);
+    }
+
+    const { data, error } = await query;
+    if (!error && data) {
+      setIssues(data as any);
+    }
+    setLoading(false);
+  }
 
   useEffect(() => {
-    async function loadIssues() {
-      setLoading(true);
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data, error } = await supabase
-        .from('issues')
-        .select('id, title, category, location_label, severity, priority, status, created_at, departments(name), locations(label)')
-        .eq('created_by', user.id)
-        .order('created_at', { ascending: false });
-
-      if (!error && data) {
-        setIssues(data as any);
-      }
-      setLoading(false);
-    }
     loadIssues();
-  }, [supabase]);
+
+    // Supabase Realtime for instant live updates
+    const channel = supabase
+      .channel('student_issues_realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'issues' },
+        () => {
+          loadIssues();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase, scope]);
 
   const filteredIssues = issues.filter((issue) => {
     if (activeTab === 'active') {
@@ -75,9 +101,9 @@ export default function MyIssuesPage() {
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">My Issues</h1>
+          <h1 className="text-2xl font-bold text-white tracking-tight">Campus Issues Hub</h1>
           <p className="text-slate-400 text-sm mt-0.5">
-            Track and verify the resolution of your submitted complaints
+            Real-time feed of all reported campus infrastructure complaints and repair status
           </p>
         </div>
         <div className="flex gap-2">
@@ -96,7 +122,43 @@ export default function MyIssuesPage() {
         </div>
       </div>
 
-      {/* Tabs */}
+      {/* Scope Switcher: All Campus Issues vs My Reported Tickets */}
+      <div className="flex items-center justify-between gap-3 bg-white/5 border border-white/10 p-1.5 rounded-2xl">
+        <div className="flex gap-1">
+          <button
+            onClick={() => setScope('all')}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 ${
+              scope === 'all'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <span>🌐 All Campus Issues</span>
+            <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded-md">
+              {scope === 'all' ? issues.length : 'All'}
+            </span>
+          </button>
+          <button
+            onClick={() => setScope('mine')}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 ${
+              scope === 'mine'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <span>👤 My Reported Tickets</span>
+            <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded-md">
+              {scope === 'mine' ? issues.length : 'Mine'}
+            </span>
+          </button>
+        </div>
+        <div className="hidden sm:flex items-center gap-1.5 text-xs text-emerald-400 pr-3">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span>Live Sync Active</span>
+        </div>
+      </div>
+
+      {/* Status Filter Tabs */}
       <div className="flex border-b border-white/10">
         {(['all', 'active', 'resolved'] as const).map((tab) => (
           <button
@@ -104,11 +166,11 @@ export default function MyIssuesPage() {
             onClick={() => setActiveTab(tab)}
             className={`pb-3 px-4 text-sm font-medium transition-all capitalize border-b-2 ${
               activeTab === tab
-                ? 'border-blue-500 text-white'
+                ? 'border-blue-500 text-white font-semibold'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            {tab} Issues ({
+            {tab} ({
               tab === 'all'
                 ? issues.length
                 : tab === 'active'
@@ -169,23 +231,48 @@ export default function MyIssuesPage() {
                       <span className="text-xs text-slate-500">
                         {issue.departments?.name ?? issue.category}
                       </span>
+                      {currentUserId && issue.created_by === currentUserId ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                          👤 My Ticket
+                        </span>
+                      ) : (
+                        issue.creator?.name && (
+                          <span className="text-[11px] text-slate-400 bg-white/5 px-2 py-0.5 rounded-full border border-white/10">
+                            By {issue.creator.name}
+                          </span>
+                        )
+                      )}
                     </div>
 
                     <h3 className="text-sm font-semibold text-white group-hover:text-blue-400 transition-colors truncate">
                       {issue.title}
                     </h3>
 
-                    <div className="flex items-center gap-4 text-xs text-slate-400">
+                    <div className="flex items-center gap-4 text-xs text-slate-400 flex-wrap">
                       <span className="flex items-center gap-1 truncate">
                         📍 {location}
                       </span>
                       <span className="shrink-0">
                         🕒 {new Date(issue.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                       </span>
+                      {issue.image_urls && issue.image_urls.length > 0 && (
+                        <span className="flex items-center gap-1 text-sky-400 font-medium shrink-0 bg-sky-500/10 border border-sky-500/20 px-2 py-0.5 rounded-md text-[11px]">
+                          📷 {issue.image_urls.length} photo{issue.image_urls.length > 1 ? 's' : ''}
+                        </span>
+                      )}
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-3 shrink-0">
+                    {issue.image_urls && issue.image_urls.length > 0 && (
+                      <div className="w-12 h-12 rounded-xl overflow-hidden border border-white/10 shrink-0 bg-black/40">
+                        <img
+                          src={issue.image_urls[0]}
+                          alt="Ticket photo"
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                        />
+                      </div>
+                    )}
                     <span className="text-xs text-blue-400 group-hover:translate-x-0.5 transition-transform flex items-center gap-1 font-medium">
                       View Details & Timeline →
                     </span>

@@ -27,12 +27,13 @@ export class IssuesController {
   static async list(req: Request, res: Response): Promise<void> {
     const userId = req.user!.id;
     const userRole = req.user!.role;
-    const { status, category, priority } = req.query;
+    const { status, category, priority, scope } = req.query;
 
     const issues = await IssuesService.listIssues(userId, userRole, {
       status: status as string | undefined,
       category: category as string | undefined,
       priority: priority as string | undefined,
+      scope: scope as string | undefined,
     });
 
     res.json({

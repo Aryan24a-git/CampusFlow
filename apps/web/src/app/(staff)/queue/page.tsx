@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 
@@ -15,6 +15,7 @@ interface JobItem {
   priority: string;
   status: string;
   created_at: string;
+  image_urls?: string[];
   departments?: { name: string };
   locations?: { label: string };
   creator?: { name: string; email: string };
@@ -54,6 +55,10 @@ export default function StaffQueuePage() {
   // Resolve modal
   const [resolvingJob, setResolvingJob] = useState<JobItem | null>(null);
   const [resolutionNote, setResolutionNote] = useState('');
+  const [resolveImages, setResolveImages] = useState<File[]>([]);
+  const [resolvePreviews, setResolvePreviews] = useState<string[]>([]);
+  const [uploadingResolve, setUploadingResolve] = useState(false);
+  const resolveFileRef = useRef<HTMLInputElement>(null);
 
   async function loadJobs() {
     setLoading(true);
@@ -85,9 +90,24 @@ export default function StaffQueuePage() {
 
   useEffect(() => {
     loadJobs();
-  }, []);
 
-  async function updateStatus(jobId: string, newStatus: string, comment?: string) {
+    const channel = supabase
+      .channel('staff_queue_realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'issues' },
+        () => {
+          loadJobs();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase]);
+
+  async function updateStatus(jobId: string, newStatus: string, comment?: string, attachmentUrl?: string) {
     setUpdatingId(jobId);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -103,6 +123,7 @@ export default function StaffQueuePage() {
         body: JSON.stringify({
           status: newStatus,
           comment: comment ?? `Staff updated status to ${newStatus}`,
+          attachment_url: attachmentUrl,
         }),
       });
 
@@ -119,11 +140,54 @@ export default function StaffQueuePage() {
     }
   }
 
+  // Handle resolve image selection
+  function handleResolveImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    const newFiles = files.slice(0, 3 - resolveImages.length);
+    setResolveImages(prev => [...prev, ...newFiles]);
+    newFiles.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = ev => setResolvePreviews(prev => [...prev, ev.target?.result as string]);
+      reader.readAsDataURL(file);
+    });
+    if (resolveFileRef.current) resolveFileRef.current.value = '';
+  }
+
+  function removeResolveImage(idx: number) {
+    setResolveImages(prev => prev.filter((_, i) => i !== idx));
+    setResolvePreviews(prev => prev.filter((_, i) => i !== idx));
+  }
+
   async function handleConfirmResolve() {
     if (!resolvingJob) return;
-    await updateStatus(resolvingJob.id, 'resolved', resolutionNote.trim() || 'Work completed successfully.');
+    setUploadingResolve(true);
+
+    let photoUrls: string[] = [];
+    try {
+      // Upload completion photos
+      for (const file of resolveImages) {
+        const ext = file.name.split('.').pop() ?? 'jpg';
+        const path = `job-completion/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+        const { error } = await supabase.storage.from('attachments').upload(path, file);
+        if (!error) {
+          const { data: urlData } = supabase.storage.from('attachments').getPublicUrl(path);
+          photoUrls.push(urlData.publicUrl);
+        }
+      }
+    } finally {
+      setUploadingResolve(false);
+    }
+
+    const note = resolutionNote.trim() || 'Work completed successfully.';
+    const commentWithPhotos = photoUrls.length > 0
+      ? `${note}\n\n📷 Completion photos: ${photoUrls.join(', ')}`
+      : note;
+
+    await updateStatus(resolvingJob.id, 'resolved', commentWithPhotos, photoUrls[0]);
     setResolvingJob(null);
     setResolutionNote('');
+    setResolveImages([]);
+    setResolvePreviews([]);
   }
 
   const filteredJobs = jobs.filter((job) => {
@@ -142,11 +206,11 @@ export default function StaffQueuePage() {
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gradient-to-r from-orange-600/20 to-amber-600/20 border border-orange-500/20 rounded-2xl p-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gradient-to-r from-emerald-600/20 via-teal-600/20 to-cyan-600/20 border border-emerald-500/20 rounded-2xl p-6">
         <div>
           <div className="flex items-center gap-2">
             <span className="text-2xl">🔧</span>
-            <h1 className="text-2xl font-bold text-white tracking-tight">Staff Work Queue</h1>
+            <h1 className="text-2xl font-bold text-white tracking-tight">Maintenance Staff Work Queue</h1>
           </div>
           <p className="text-slate-400 text-sm mt-1">
             Assigned campus maintenance jobs — sorted by priority
@@ -179,7 +243,7 @@ export default function StaffQueuePage() {
             onClick={() => setActiveTab(t.key)}
             className={`pb-3 px-4 text-sm font-medium transition-all border-b-2 ${
               activeTab === t.key
-                ? 'border-orange-500 text-white font-semibold'
+                ? 'border-emerald-500 text-white font-semibold'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -251,6 +315,24 @@ export default function StaffQueuePage() {
                     <p className="text-xs text-slate-300 line-clamp-2">
                       {job.description}
                     </p>
+
+                    {/* Complaint Photos if attached */}
+                    {job.image_urls && job.image_urls.length > 0 && (
+                      <div className="pt-2">
+                        <div className="text-[11px] font-semibold text-slate-400 mb-1.5">📷 Attached Complaint Photos:</div>
+                        <div className="flex gap-2 flex-wrap">
+                          {job.image_urls.map((url, idx) => (
+                            <a key={idx} href={url} target="_blank" rel="noreferrer" title="Click to view full image">
+                              <img
+                                src={url}
+                                alt={`Complaint evidence ${idx + 1}`}
+                                className="w-16 h-16 object-cover rounded-xl border border-white/20 hover:scale-105 transition-transform"
+                              />
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400 pt-1">
                       <span className="flex items-center gap-1 font-medium text-slate-200">
@@ -339,10 +421,60 @@ export default function StaffQueuePage() {
                 className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-xs placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 resize-none"
               />
             </div>
+
+            {/* Photo Upload for Completion Evidence */}
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                📷 Attach Completion Photo(s) <span className="text-slate-600 normal-case">(optional, max 3)</span>
+              </label>
+              <input
+                ref={resolveFileRef}
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleResolveImageSelect}
+                className="hidden"
+                disabled={resolveImages.length >= 3}
+              />
+              {resolvePreviews.length > 0 && (
+                <div className="flex gap-2 flex-wrap mb-2">
+                  {resolvePreviews.map((src, i) => (
+                    <div key={i} className="relative group">
+                      <img
+                        src={src}
+                        alt={`Preview ${i + 1}`}
+                        className="w-16 h-16 object-cover rounded-lg border border-white/20"
+                      />
+                      <button
+                        onClick={() => removeResolveImage(i)}
+                        className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-600 text-white rounded-full text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => resolveFileRef.current?.click()}
+                disabled={resolveImages.length >= 3}
+                className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 border border-dashed border-white/20 hover:border-emerald-500/40 text-slate-400 hover:text-emerald-300 rounded-xl text-xs transition-all disabled:opacity-40"
+              >
+                <span>📎</span>
+                {resolveImages.length > 0 ? `Add more (${resolveImages.length}/3)` : 'Attach before/after photo'}
+              </button>
+            </div>
+
             <div className="flex justify-end gap-2 pt-1">
               <button
                 type="button"
-                onClick={() => setResolvingJob(null)}
+                onClick={() => {
+                  setResolvingJob(null);
+                  setResolveImages([]);
+                  setResolvePreviews([]);
+                  setResolutionNote('');
+                }}
                 className="px-4 py-2 bg-white/10 text-slate-300 rounded-xl text-xs font-medium"
               >
                 Cancel
@@ -350,9 +482,10 @@ export default function StaffQueuePage() {
               <button
                 type="button"
                 onClick={handleConfirmResolve}
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-500/25"
+                disabled={uploadingResolve}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-500/25 disabled:opacity-50 flex items-center gap-1.5"
               >
-                Mark as Resolved
+                {uploadingResolve ? '⏳ Uploading...' : '✅ Mark as Resolved'}
               </button>
             </div>
           </div>

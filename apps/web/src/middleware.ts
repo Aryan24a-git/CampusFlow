@@ -50,7 +50,9 @@ export async function middleware(request: NextRequest) {
         .eq('id', user.id)
         .single();
 
-      const dest = ROLE_DASHBOARDS[profile?.role ?? 'student'] ?? '/dashboard';
+      // Fallback to JWT metadata if DB query returns null (RLS or timing)
+      const role = profile?.role ?? (user.user_metadata?.role as string) ?? 'student';
+      const dest = ROLE_DASHBOARDS[role] ?? '/dashboard';
       return NextResponse.redirect(new URL(dest, request.url));
     }
     return supabaseResponse;
@@ -61,14 +63,14 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
 
-  // Role-based route protection
+  // Role-based route protection — fallback to JWT metadata if DB returns null
   const { data: profile } = await supabase
     .from('users')
     .select('role')
     .eq('id', user.id)
     .single();
 
-  const role = profile?.role ?? 'student';
+  const role = profile?.role ?? (user.user_metadata?.role as string) ?? 'student';
 
   // Staff can't access /admin routes
   if (pathname.startsWith('/admin') && !['admin', 'grievance_authority'].includes(role)) {

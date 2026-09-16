@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
@@ -38,6 +38,49 @@ export default function NewIssuePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Image upload states
+  const [images, setImages] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
+  const [uploadingImages, setUploadingImages] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    const newFiles = files.slice(0, 3 - images.length);
+    setImages(prev => [...prev, ...newFiles]);
+    newFiles.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = ev => setPreviews(prev => [...prev, ev.target?.result as string]);
+      reader.readAsDataURL(file);
+    });
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  function removeImage(idx: number) {
+    setImages(prev => prev.filter((_, i) => i !== idx));
+    setPreviews(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  async function uploadImages(): Promise<string[]> {
+    if (images.length === 0) return [];
+    setUploadingImages(true);
+    const urls: string[] = [];
+    try {
+      for (const file of images) {
+        const ext = file.name.split('.').pop() ?? 'jpg';
+        const path = `issues/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+        const { error: upErr } = await supabase.storage.from('attachments').upload(path, file);
+        if (!upErr) {
+          const { data: urlData } = supabase.storage.from('attachments').getPublicUrl(path);
+          urls.push(urlData.publicUrl);
+        }
+      }
+    } finally {
+      setUploadingImages(false);
+    }
+    return urls;
+  }
+
   useEffect(() => {
     async function fetchLocations() {
       const { data } = await supabase.from('locations').select('id, label').order('label');
@@ -57,6 +100,7 @@ export default function NewIssuePage() {
     setError('');
 
     try {
+      const imageUrls = await uploadImages();
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:4000';
@@ -74,6 +118,7 @@ export default function NewIssuePage() {
           subcategory: subcategory.trim() || undefined,
           location_label: locationLabel || undefined,
           severity,
+          image_urls: imageUrls,
         }),
       });
 
@@ -229,13 +274,58 @@ export default function NewIssuePage() {
           />
         </div>
 
+        {/* Photo Evidence Upload */}
+        <div>
+          <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+            📷 Attach Photo Evidence <span className="text-slate-500 normal-case">(optional, helps staff identify problem faster, max 3)</span>
+          </label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={handleImageSelect}
+            className="hidden"
+            disabled={images.length >= 3}
+          />
+          {previews.length > 0 && (
+            <div className="flex gap-2 flex-wrap mb-2">
+              {previews.map((src, i) => (
+                <div key={i} className="relative group">
+                  <img
+                    src={src}
+                    alt={`Preview ${i + 1}`}
+                    className="w-16 h-16 object-cover rounded-xl border border-white/20"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeImage(i)}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-600 text-white rounded-full text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={images.length >= 3 || uploadingImages}
+            className="flex items-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 border border-dashed border-white/20 hover:border-blue-500/40 text-slate-400 hover:text-blue-300 rounded-xl text-xs transition-all w-full justify-center disabled:opacity-40"
+          >
+            <span>📎</span>
+            {images.length > 0 ? `Add more photos (${images.length}/3)` : 'Attach photo of problem / damage'}
+          </button>
+        </div>
+
         {/* Submit button */}
         <button
           type="submit"
-          disabled={loading}
-          className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold rounded-xl text-sm transition-all shadow-lg shadow-blue-500/25 disabled:opacity-50"
+          disabled={loading || uploadingImages}
+          className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold rounded-xl text-sm transition-all shadow-lg shadow-blue-500/25 disabled:opacity-50 flex items-center justify-center gap-2"
         >
-          {loading ? 'Submitting Report...' : 'Submit Issue'}
+          {uploadingImages ? '⏳ Uploading photos...' : loading ? 'Submitting Report...' : 'Submit Issue'}
         </button>
       </form>
     </div>

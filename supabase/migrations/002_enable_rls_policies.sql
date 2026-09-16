@@ -61,3 +61,16 @@ CREATE POLICY "Allow authenticated read found_items" ON found_items FOR SELECT U
 
 DROP POLICY IF EXISTS "Allow authenticated insert found_items" ON found_items;
 CREATE POLICY "Allow authenticated insert found_items" ON found_items FOR INSERT WITH CHECK (true);
+
+-- 8. Storage Attachments Bucket Policies
+DROP POLICY IF EXISTS "Public and authenticated can upload attachments" ON storage.objects;
+CREATE POLICY "Public and authenticated can upload attachments" ON storage.objects
+FOR INSERT WITH CHECK (bucket_id = 'attachments');
+
+DROP POLICY IF EXISTS "Public and authenticated can view attachments" ON storage.objects;
+CREATE POLICY "Public and authenticated can view attachments" ON storage.objects
+FOR SELECT USING (bucket_id = 'attachments');
+
+DROP POLICY IF EXISTS "Public and authenticated can update attachments" ON storage.objects;
+CREATE POLICY "Public and authenticated can update attachments" ON storage.objects
+FOR UPDATE USING (bucket_id = 'attachments');

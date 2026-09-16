@@ -27,6 +27,7 @@ interface IssueDetail {
   created_at: string;
   resolved_at?: string;
   sla_deadline?: string;
+  image_urls?: string[];
   departments?: { name: string; contact?: string };
   locations?: { label: string; building?: string; room?: string };
   staff?: { id: string; user?: { name: string; phone?: string } };
@@ -239,6 +240,26 @@ export default function IssueDetailPage() {
             {issue.description}
           </p>
         </div>
+
+        {/* Attached Photos */}
+        {issue.image_urls && issue.image_urls.length > 0 && (
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+              📷 Attached Photos ({issue.image_urls.length})
+            </h3>
+            <div className="flex gap-3 flex-wrap">
+              {issue.image_urls.map((url, i) => (
+                <a key={i} href={url} target="_blank" rel="noreferrer" title="Click to view full photo">
+                  <img
+                    src={url}
+                    alt={`Attached photo ${i + 1}`}
+                    className="w-24 h-24 sm:w-28 sm:h-28 object-cover rounded-xl border border-white/20 hover:scale-105 transition-transform"
+                  />
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Resolution Banner / Action Buttons */}
         {issue.status === 'resolved' && (

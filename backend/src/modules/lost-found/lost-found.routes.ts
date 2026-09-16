@@ -9,12 +9,12 @@ router.get('/', auth, async (_req: Request, res: Response): Promise<void> => {
   try {
     const { data: lostItems, error: lostErr } = await db
       .from('lost_items')
-      .select('id, user_id, object_type, description, color, location, lost_at, status, created_at, users(name)')
+      .select('id, user_id, object_type, description, color, location, image_url, lost_at, status, created_at, users(name)')
       .order('created_at', { ascending: false });
 
     const { data: foundItems, error: foundErr } = await db
       .from('found_items')
-      .select('id, user_id, object_type, description, color, location, found_at, status, created_at, users(name)')
+      .select('id, user_id, object_type, description, color, location, image_url, found_at, status, created_at, users(name)')
       .order('created_at', { ascending: false });
 
     if (lostErr) throw lostErr;
@@ -36,12 +36,14 @@ router.get('/', auth, async (_req: Request, res: Response): Promise<void> => {
 router.post('/lost', auth, async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = req.user!.id;
-    const { object_type, description, color, location, private_detail } = req.body;
+    const { object_type, description, color, location, private_detail, image_urls, image_url } = req.body;
 
     if (!object_type || !description) {
       res.status(400).json({ success: false, error: 'Object type and description are required' });
       return;
     }
+
+    const finalImageUrl = (Array.isArray(image_urls) && image_urls.length > 0 ? image_urls[0] : image_url) || null;
 
     const { data, error } = await db
       .from('lost_items')
@@ -52,6 +54,7 @@ router.post('/lost', auth, async (req: Request, res: Response): Promise<void> =>
         color: color?.trim() || null,
         location: location?.trim() || null,
         private_detail: private_detail?.trim() || null,
+        image_url: finalImageUrl,
         status: 'searching',
       })
       .select()
@@ -81,12 +84,14 @@ router.post('/lost', auth, async (req: Request, res: Response): Promise<void> =>
 router.post('/found', auth, async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = req.user!.id;
-    const { object_type, description, color, location } = req.body;
+    const { object_type, description, color, location, image_urls, image_url } = req.body;
 
     if (!object_type || !description) {
       res.status(400).json({ success: false, error: 'Object type and description are required' });
       return;
     }
+
+    const finalImageUrl = (Array.isArray(image_urls) && image_urls.length > 0 ? image_urls[0] : image_url) || null;
 
     const { data, error } = await db
       .from('found_items')
@@ -96,6 +101,7 @@ router.post('/found', auth, async (req: Request, res: Response): Promise<void> =
         description: description.trim(),
         color: color?.trim() || null,
         location: location?.trim() || null,
+        image_url: finalImageUrl,
         status: 'available',
       })
       .select()

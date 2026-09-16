@@ -17,18 +17,21 @@ export default async function StaffLayout({
     .eq('id', user.id)
     .single();
 
-  if (!profile) redirect('/login');
+  // Fallback to JWT metadata if the DB query returns null (RLS timing issue)
+  const name = profile?.name ?? (user!.user_metadata?.name as string) ?? 'User';
+  const email = profile?.email ?? user!.email ?? '';
+  const role = profile?.role ?? (user!.user_metadata?.role as string) ?? 'student';
 
-  if (!['staff', 'admin'].includes(profile.role)) {
+  if (!['staff', 'admin'].includes(role)) {
     redirect('/dashboard');
   }
 
   return (
     <div className="min-h-screen bg-slate-950">
       <Navbar
-        userName={profile.name}
-        userEmail={profile.email}
-        userRole={profile.role}
+        userName={name}
+        userEmail={email}
+        userRole={role}
       />
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
         {children}

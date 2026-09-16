@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 
 interface LostFoundItem {
@@ -11,6 +11,7 @@ interface LostFoundItem {
   location?: string;
   status: string;
   created_at: string;
+  image_url?: string;
   users?: { name: string };
 }
 
@@ -30,6 +31,49 @@ export default function LostFoundPage() {
   const [formPrivate, setFormPrivate] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [matchAlert, setMatchAlert] = useState<string | null>(null);
+
+  // Image upload
+  const [formImages, setFormImages] = useState<File[]>([]);
+  const [formPreviews, setFormPreviews] = useState<string[]>([]);
+  const [uploadingImg, setUploadingImg] = useState(false);
+  const imgFileRef = useRef<HTMLInputElement>(null);
+
+  function handleFormImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    const newFiles = files.slice(0, 3 - formImages.length);
+    setFormImages(prev => [...prev, ...newFiles]);
+    newFiles.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = ev => setFormPreviews(prev => [...prev, ev.target?.result as string]);
+      reader.readAsDataURL(file);
+    });
+    if (imgFileRef.current) imgFileRef.current.value = '';
+  }
+
+  function removeFormImage(idx: number) {
+    setFormImages(prev => prev.filter((_, i) => i !== idx));
+    setFormPreviews(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  async function uploadFormImages(): Promise<string[]> {
+    if (formImages.length === 0) return [];
+    setUploadingImg(true);
+    const urls: string[] = [];
+    try {
+      for (const file of formImages) {
+        const ext = file.name.split('.').pop() ?? 'jpg';
+        const path = `lost-found/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+        const { error } = await supabase.storage.from('attachments').upload(path, file);
+        if (!error) {
+          const { data: urlData } = supabase.storage.from('attachments').getPublicUrl(path);
+          urls.push(urlData.publicUrl);
+        }
+      }
+    } finally {
+      setUploadingImg(false);
+    }
+    return urls;
+  }
 
   async function loadItems() {
     setLoading(true);
@@ -62,6 +106,7 @@ export default function LostFoundPage() {
     setSubmitting(true);
     setMatchAlert(null);
     try {
+      const imageUrls = await uploadFormImages();
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:4000';
@@ -78,6 +123,7 @@ export default function LostFoundPage() {
           color: formColor,
           location: formLoc,
           private_detail: formPrivate,
+          image_urls: imageUrls,
         }),
       });
 
@@ -91,6 +137,8 @@ export default function LostFoundPage() {
         setFormColor('');
         setFormLoc('');
         setFormPrivate('');
+        setFormImages([]);
+        setFormPreviews([]);
         await loadItems();
         setActiveTab('browse');
       } else {
@@ -107,6 +155,7 @@ export default function LostFoundPage() {
     e.preventDefault();
     setSubmitting(true);
     try {
+      const imageUrls = await uploadFormImages();
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:4000';
@@ -122,6 +171,7 @@ export default function LostFoundPage() {
           description: formDesc,
           color: formColor,
           location: formLoc,
+          image_urls: imageUrls,
         }),
       });
 
@@ -132,6 +182,8 @@ export default function LostFoundPage() {
         setFormDesc('');
         setFormColor('');
         setFormLoc('');
+        setFormImages([]);
+        setFormPreviews([]);
         await loadItems();
         setActiveTab('browse');
       } else {
@@ -265,6 +317,16 @@ export default function LostFoundPage() {
                     </span>
                   </div>
 
+                  {item.image_url && (
+                    <a href={item.image_url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-xl">
+                      <img
+                        src={item.image_url}
+                        alt={item.object_type}
+                        className="w-full h-36 object-cover rounded-xl border border-white/10 hover:scale-105 transition-transform"
+                      />
+                    </a>
+                  )}
+
                   <div>
                     <h3 className="text-sm font-bold text-white capitalize">{item.object_type}</h3>
                     <p className="text-xs text-slate-300 mt-1 line-clamp-2">{item.description}</p>
@@ -356,12 +418,47 @@ export default function LostFoundPage() {
             <span className="text-[10px] text-slate-500">Only campus security can see this when you claim.</span>
           </div>
 
+          {/* Photo Upload */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-2">
+              📷 Photos <span className="text-slate-500 font-normal">(optional — helps AI matching, max 3)</span>
+            </label>
+            <input
+              ref={imgFileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleFormImageSelect}
+              className="hidden"
+              disabled={formImages.length >= 3}
+            />
+            {formPreviews.length > 0 && (
+              <div className="flex gap-2 flex-wrap mb-2">
+                {formPreviews.map((src, i) => (
+                  <div key={i} className="relative group">
+                    <img src={src} alt={`Preview ${i + 1}`} className="w-16 h-16 object-cover rounded-lg border border-white/20" />
+                    <button onClick={() => removeFormImage(i)} type="button"
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-600 text-white rounded-full text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button type="button" onClick={() => imgFileRef.current?.click()}
+              disabled={formImages.length >= 3}
+              className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 border border-dashed border-white/20 hover:border-rose-500/40 text-slate-400 hover:text-rose-300 rounded-xl text-xs transition-all w-full justify-center disabled:opacity-40">
+              <span>📎</span>
+              {formImages.length > 0 ? `Add more (${formImages.length}/3)` : 'Attach a photo of the item'}
+            </button>
+          </div>
+
           <button
             type="submit"
-            disabled={submitting}
-            className="w-full py-3 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl text-xs transition-all shadow-lg shadow-rose-600/25"
+            disabled={submitting || uploadingImg}
+            className="w-full py-3 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl text-xs transition-all shadow-lg shadow-rose-600/25 disabled:opacity-50"
           >
-            {submitting ? 'Registering...' : 'Register Lost Item'}
+            {uploadingImg ? '⏳ Uploading photos...' : submitting ? 'Registering...' : 'Register Lost Item'}
           </button>
         </form>
       )}
@@ -420,12 +517,47 @@ export default function LostFoundPage() {
             />
           </div>
 
+          {/* Photo Upload */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-2">
+              📷 Photo of Found Item <span className="text-slate-500 font-normal">(optional but recommended, max 3)</span>
+            </label>
+            <input
+              ref={imgFileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleFormImageSelect}
+              className="hidden"
+              disabled={formImages.length >= 3}
+            />
+            {formPreviews.length > 0 && (
+              <div className="flex gap-2 flex-wrap mb-2">
+                {formPreviews.map((src, i) => (
+                  <div key={i} className="relative group">
+                    <img src={src} alt={`Preview ${i + 1}`} className="w-16 h-16 object-cover rounded-lg border border-white/20" />
+                    <button onClick={() => removeFormImage(i)} type="button"
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-600 text-white rounded-full text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button type="button" onClick={() => imgFileRef.current?.click()}
+              disabled={formImages.length >= 3}
+              className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 border border-dashed border-white/20 hover:border-emerald-500/40 text-slate-400 hover:text-emerald-300 rounded-xl text-xs transition-all w-full justify-center disabled:opacity-40">
+              <span>📎</span>
+              {formImages.length > 0 ? `Add more (${formImages.length}/3)` : 'Attach a photo of what you found'}
+            </button>
+          </div>
+
           <button
             type="submit"
-            disabled={submitting}
-            className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition-all shadow-lg shadow-emerald-600/25"
+            disabled={submitting || uploadingImg}
+            className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition-all shadow-lg shadow-emerald-600/25 disabled:opacity-50"
           >
-            {submitting ? 'Submitting...' : 'Register Found Item'}
+            {uploadingImg ? '⏳ Uploading photos...' : submitting ? 'Submitting...' : 'Register Found Item'}
           </button>
         </form>
       )}

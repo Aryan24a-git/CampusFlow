@@ -72,6 +72,26 @@ export class IssuesService {
       comment: 'Issue reported by user',
     });
 
+    // ── Automated Notification to respective staff ────────────────────────
+    if (assignedDepartmentId) {
+      const { data: staffMembers } = await db
+        .from('staff')
+        .select('user_id')
+        .eq('department_id', assignedDepartmentId);
+
+      if (staffMembers && staffMembers.length > 0) {
+        const notifs = staffMembers.map(sm => ({
+          user_id: sm.user_id,
+          type: 'issue_assigned',
+          title: `New Task: ${issue.title}`,
+          message: `New ${issue.category} issue reported at ${issue.location_label ?? 'Campus'}. SLA: 24 hours.`,
+          reference_id: issue.id,
+          read: false,
+        }));
+        await db.from('notifications').insert(notifs);
+      }
+    }
+
     return issue;
   }
 
@@ -81,7 +101,7 @@ export class IssuesService {
   static async listIssues(
     userId: string,
     userRole: UserRole,
-    filters?: { status?: string; category?: string; priority?: string }
+    filters?: { status?: string; category?: string; priority?: string; scope?: string }
   ) {
     let query = db
       .from('issues')
@@ -90,22 +110,13 @@ export class IssuesService {
 
     // Role-based visibility
     if (userRole === 'student' || userRole === 'faculty') {
-      // Students and faculty only see their own issues
-      query = query.eq('created_by', userId);
-    } else if (userRole === 'staff') {
-      // Find staff record to get department and staff ID
-      const { data: staffRecord } = await db
-        .from('staff')
-        .select('id, department_id')
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      if (staffRecord) {
-        // Staff see issues assigned directly to them OR to their department
-        query = query.or(
-          `assigned_staff.eq.${staffRecord.id},assigned_department.eq.${staffRecord.department_id}`
-        );
+      // If ?scope=my is requested, filter to user's created issues
+      if (filters?.scope === 'my') {
+        query = query.eq('created_by', userId);
       }
+      // Otherwise, show all campus issues
+    } else if (userRole === 'staff') {
+      // Maintenance staff can see all campus maintenance issues so anyone can take and complete any job!
     }
     // admin and grievance_authority see all
 
@@ -131,7 +142,7 @@ export class IssuesService {
   /**
    * Get single issue with full timeline history
    */
-  static async getIssueById(issueId: string, userId: string, userRole: UserRole) {
+  static async getIssueById(issueId: string, _userId: string, _userRole: UserRole) {
     const { data: issue, error } = await db
       .from('issues')
       .select(`
@@ -148,13 +159,7 @@ export class IssuesService {
       throw HTTP.notFound('Issue not found');
     }
 
-    // Role access check: student/faculty can only view their own issues
-    if (
-      (userRole === 'student' || userRole === 'faculty') &&
-      issue.created_by !== userId
-    ) {
-      throw HTTP.forbidden('You do not have permission to view this issue');
-    }
+    // Any campus member can view the issue details!
 
     // Fetch timeline updates
     const { data: updates } = await db
@@ -258,6 +263,18 @@ export class IssuesService {
       comment: comment?.trim() ?? `Status changed to ${newStatus}`,
       attachment_url: attachmentUrl ?? null,
     });
+
+    // Notify issue creator if updated by someone else
+    if (currentIssue.created_by !== userId) {
+      await db.from('notifications').insert({
+        user_id: currentIssue.created_by,
+        type: 'issue_update',
+        title: `Issue ${newStatus === 'resolved' ? 'Resolved' : 'Updated'}: ${updatedIssue.title}`,
+        message: `Status has been updated to "${newStatus}". ${comment ? 'Note: ' + comment : ''}`,
+        reference_id: issueId,
+        read: false,
+      });
+    }
 
     return updatedIssue;
   }

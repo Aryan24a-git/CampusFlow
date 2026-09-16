@@ -21,7 +21,7 @@ const CAMPUS_INFO_MAP: Record<string, string> = {
 // POST /api/chat
 router.post('/', auth, async (req: Request, res: Response): Promise<void> => {
   try {
-    const { message } = req.body;
+    const { message, imageUrls } = req.body;
     if (!message || typeof message !== 'string') {
       res.status(400).json({ success: false, error: 'Message is required' });
       return;
@@ -39,6 +39,7 @@ router.post('/', auth, async (req: Request, res: Response): Promise<void> => {
     switch (intent) {
       case 'MAINTENANCE_REPORT': {
         const extracted = await extractIssueFields(sanitized);
+        const hasPhotos = Array.isArray(imageUrls) && imageUrls.length > 0;
 
         // Check for potential duplicate issues at same location
         let duplicateFound = false;
@@ -64,14 +65,22 @@ router.post('/', auth, async (req: Request, res: Response): Promise<void> => {
             type: 'duplicate_found',
             data: {
               ...extracted,
+              image_urls: hasPhotos ? imageUrls : [],
               existingIssueId: existingIncidentId,
             },
           };
         } else {
-          replyText = `I've analyzed your report. Here is the ticket summary ready for dispatch:`;
+          if (hasPhotos) {
+            replyText = `I've analyzed your report and attached your photo evidence (${imageUrls.length} photo${imageUrls.length > 1 ? 's' : ''}). Here is the ticket summary ready for dispatch:`;
+          } else {
+            replyText = `I've analyzed your complaint. 📷 **Do you have a picture of the issue?** You can click the 📎 paperclip button below to attach a photo before creating the ticket, or proceed with the summary below:`;
+          }
           actionCard = {
             type: 'issue_confirmation',
-            data: { ...extracted } as Record<string, unknown>,
+            data: {
+              ...extracted,
+              image_urls: hasPhotos ? imageUrls : [],
+            } as Record<string, unknown>,
           };
         }
         break;
